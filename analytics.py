@@ -155,8 +155,7 @@ ANOMALY_TAG_CONFIG = [
     ("低签到率", lambda row, t: row["签到率"] < t["low_checkin_rate"]),
     ("高退课率", lambda row, t: row["退课率"] > t["high_drop_rate"]),
     ("人数超限", lambda row, t: row["容量利用率"] > t["over_capacity_ratio"]),
-    ("低消课率", lambda row, t: row["消课率"] < t.get("low_completion_rate", 0.50)),
-    ("助教负载异常", lambda row, t: row.get("_ta_overloaded", False)),
+    ("低消课率", lambda row, t: row["消课率"] < t.get("low_completion_rate", 0.40)),
 ]
 
 SEVERITY_MAP = {
@@ -164,7 +163,6 @@ SEVERITY_MAP = {
     "高退课率": "高",
     "人数超限": "中",
     "低消课率": "中",
-    "助教负载异常": "中",
 }
 
 
@@ -173,9 +171,6 @@ def compute_anomaly_tags(df):
         return df
     thresholds = get_thresholds()
     df = compute_metrics(df)
-    ta_load = compute_ta_load(df)
-    overloaded_tas = set(ta_load[ta_load["负载标记"] == "负载过高"]["助教"].tolist()) if not ta_load.empty else set()
-    df["_ta_overloaded"] = df["助教"].isin(overloaded_tas)
     all_tags = []
     all_severities = []
     for _, row in df.iterrows():
@@ -199,7 +194,6 @@ def compute_anomaly_tags(df):
     df["严重程度"] = all_severities
     df["是否异常"] = df["异常标签"].apply(lambda x: len(x) > 0)
     df["异常标签文本"] = df["异常标签"].apply(lambda x: "、".join(x) if x else "正常")
-    df = df.drop(columns=["_ta_overloaded"])
     return df
 
 
@@ -213,6 +207,7 @@ def compute_anomaly_overview(df):
             "警告课程数": 0,
             "提示课程数": 0,
             "异常标签分布": {},
+            "助教负载预警": [],
         }
     df = compute_anomaly_tags(df)
     anomaly_df = df[df["是否异常"]]
@@ -220,6 +215,12 @@ def compute_anomaly_overview(df):
     for tags in anomaly_df["异常标签"]:
         for t in tags:
             tag_counter[t] = tag_counter.get(t, 0) + 1
+    ta_load = compute_ta_load(df)
+    overloaded_tas = []
+    if not ta_load.empty:
+        high_load = ta_load[ta_load["负载标记"] == "负载过高"]
+        for _, row in high_load.iterrows():
+            overloaded_tas.append({"助教": row["助教"], "课程数": int(row["课程数"])})
     return {
         "总课程数": len(df),
         "异常课程数": int(df["是否异常"].sum()),
@@ -228,6 +229,7 @@ def compute_anomaly_overview(df):
         "警告课程数": int((df["严重程度"] == "警告").sum()),
         "提示课程数": int((df["严重程度"] == "提示").sum()),
         "异常标签分布": tag_counter,
+        "助教负载预警": overloaded_tas,
     }
 
 
@@ -311,7 +313,8 @@ def compute_single_course_review(df, course_name):
     if not conclusions:
         conclusions.append("该课程各项指标整体正常，无明显异常趋势。")
     return {
-        "课程名称": course_name,
+        "维度名称": course_name,
+        "维度类型": "课程",
         "总课时数": len(course_df),
         "异常课时数": len(anomaly_rows),
         "异常课时占比": round(len(anomaly_rows) / len(course_df), 4) if len(course_df) > 0 else 0,
@@ -378,12 +381,15 @@ def generate_anomaly_suggestions(df):
             f"⚠️ {len(low_completion)} 课时消课率低于阈值，建议关注课程完成质量和签到后续跟踪。"
         )
 
-    ta_anomaly = df[df["异常标签"].apply(lambda x: "助教负载异常" in x)]
-    if not ta_anomaly.empty:
-        tas = ta_anomaly["助教"].unique()
-        suggestions.append(
-            f"⚠️ 助教 {'、'.join(tas)} 存在负载异常，建议重新评估助教排班分配。"
-        )
+    ta_load = compute_ta_load(df)
+    if not ta_load.empty:
+        high_load = ta_load[ta_load["负载标记"] == "负载过高"]
+        if not high_load.empty:
+            names = "、".join(high_load["助教"].tolist())
+            suggestions.append(
+                f"⚠️ 助教 {names} 负载超过 {int(thresholds['high_ta_load'])} 门课，"
+                f"建议重新评估助教排班分配。"
+            )
 
     dim_course = compute_anomaly_by_dimension(df, "课程名称")
     if not dim_course.empty and len(dim_course) > 0:
@@ -400,3 +406,104 @@ def generate_anomaly_suggestions(df):
         )
 
     return suggestions
+
+
+def compute_single_venue_review(df, venue_name):
+    if df.empty or not venue_name:
+        return None
+    df = compute_anomaly_tags(df)
+    venue_df = df[df["场馆"] == venue_name].sort_values("日期")
+    if venue_df.empty:
+        return None
+    anomaly_rows = venue_df[venue_df["是否异常"]]
+    all_tags = []
+    for tags in anomaly_rows["异常标签"]:
+        all_tags.extend(tags)
+    tag_counter = {}
+    for t in all_tags:
+        tag_counter[t] = tag_counter.get(t, 0) + 1
+    top_tags = sorted(tag_counter.items(), key=lambda x: -x[1])
+    courses = venue_df["课程名称"].unique().tolist()
+    tas = venue_df["助教"].unique().tolist()
+    overall_anomaly_rate = df["是否异常"].mean()
+    conclusions = []
+    if venue_df["签到率"].mean() < get_thresholds()["low_checkin_rate"]:
+        conclusions.append("该场馆平均签到率持续偏低，需排查场馆设施或排课时段。")
+    if venue_df["退课率"].mean() > get_thresholds()["high_drop_rate"]:
+        conclusions.append("该场馆退课率偏高，建议审视场馆环境或课程安排。")
+    if venue_df["容量利用率"].mean() > get_thresholds()["over_capacity_ratio"]:
+        conclusions.append("该场馆课程容量长期超限，建议扩容或分散排课。")
+    if not conclusions:
+        conclusions.append("该场馆各项指标整体正常，无明显异常趋势。")
+    return {
+        "维度名称": venue_name,
+        "维度类型": "场馆",
+        "总课时数": len(venue_df),
+        "异常课时数": len(anomaly_rows),
+        "异常课时占比": round(len(anomaly_rows) / len(venue_df), 4) if len(venue_df) > 0 else 0,
+        "主要异常标签": top_tags,
+        "平均签到率": round(venue_df["签到率"].mean(), 4),
+        "平均退课率": round(venue_df["退课率"].mean(), 4),
+        "平均消课率": round(venue_df["消课率"].mean(), 4),
+        "平均容量利用率": round(venue_df["容量利用率"].mean(), 4),
+        "关联课程": courses,
+        "关联助教": tas,
+        "整体异常率": round(overall_anomaly_rate, 4),
+        "结论": conclusions,
+        "课程明细": venue_df,
+        "趋势数据": compute_anomaly_trends(venue_df, freq="W"),
+    }
+
+
+def compute_single_ta_review(df, ta_name):
+    if df.empty or not ta_name:
+        return None
+    df = compute_anomaly_tags(df)
+    ta_df = df[df["助教"] == ta_name].sort_values("日期")
+    if ta_df.empty:
+        return None
+    anomaly_rows = ta_df[ta_df["是否异常"]]
+    all_tags = []
+    for tags in anomaly_rows["异常标签"]:
+        all_tags.extend(tags)
+    tag_counter = {}
+    for t in all_tags:
+        tag_counter[t] = tag_counter.get(t, 0) + 1
+    top_tags = sorted(tag_counter.items(), key=lambda x: -x[1])
+    courses = ta_df["课程名称"].unique().tolist()
+    venues = ta_df["场馆"].unique().tolist()
+    overall_anomaly_rate = df["是否异常"].mean()
+    thresholds = get_thresholds()
+    conclusions = []
+    if ta_df["签到率"].mean() < thresholds["low_checkin_rate"]:
+        conclusions.append("该助教所带课程平均签到率偏低，建议关注教学互动质量。")
+    if ta_df["退课率"].mean() > thresholds["high_drop_rate"]:
+        conclusions.append("该助教所带课程退课率偏高，建议评估教学方式与学员适配度。")
+    ta_load = compute_ta_load(df)
+    if not ta_load.empty:
+        ta_record = ta_load[ta_load["助教"] == ta_name]
+        if not ta_record.empty and ta_record.iloc[0]["负载标记"] == "负载过高":
+            conclusions.append(
+                f"该助教当前承担 {int(ta_record.iloc[0]['课程数'])} 门课，超过负载阈值 "
+                f"({int(thresholds['high_ta_load'])} 门)，建议重新分配排班。"
+            )
+    if not conclusions:
+        conclusions.append("该助教各项指标整体正常，无明显异常趋势。")
+    return {
+        "维度名称": ta_name,
+        "维度类型": "助教",
+        "总课时数": len(ta_df),
+        "异常课时数": len(anomaly_rows),
+        "异常课时占比": round(len(anomaly_rows) / len(ta_df), 4) if len(ta_df) > 0 else 0,
+        "主要异常标签": top_tags,
+        "平均签到率": round(ta_df["签到率"].mean(), 4),
+        "平均退课率": round(ta_df["退课率"].mean(), 4),
+        "平均消课率": round(ta_df["消课率"].mean(), 4),
+        "平均容量利用率": round(ta_df["容量利用率"].mean(), 4),
+        "关联课程": courses,
+        "关联场馆": venues,
+        "整体异常率": round(overall_anomaly_rate, 4),
+        "结论": conclusions,
+        "课程明细": ta_df,
+        "趋势数据": compute_anomaly_trends(ta_df, freq="W"),
+    }

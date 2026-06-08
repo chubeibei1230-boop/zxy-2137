@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from data_manager import get_data, filter_data, get_unique_values
-from analytics import compute_anomaly_tags, compute_single_course_review
+from analytics import compute_anomaly_tags, compute_single_course_review, compute_single_venue_review, compute_single_ta_review
 
 
 def render_overview_cards(overview):
@@ -120,9 +120,13 @@ def render_anomaly_overview_cards(overview):
     ]
     for col, (label, value, icon) in zip(cols, items):
         col.metric(label=f"{icon} {label}", value=value)
+    overloaded = overview.get("助教负载预警", [])
+    if overloaded:
+        names = "、".join(f"{t['助教']}({t['课程数']}门)" for t in overloaded)
+        st.caption(f"⚠️ 助教负载预警：{names}（此为系统性问题，不计入课时异常）")
 
 
-def render_anomaly_detail_table(df):
+def render_anomaly_detail_table(df, dimension="课程名称"):
     if df.empty:
         st.info("暂无异常课程数据")
         return
@@ -130,23 +134,42 @@ def render_anomaly_detail_table(df):
     if anomaly_df.empty:
         st.success("当前筛选范围内无异常课程 🎉")
         return
-    display_cols = ["日期", "课程名称", "场馆", "助教", "报名人数", "签到率", "消课率", "退课率", "容量利用率", "异常标签文本", "严重程度"]
-    existing_cols = [c for c in display_cols if c in anomaly_df.columns]
-    display_df = anomaly_df[existing_cols].sort_values(["严重程度", "日期"], ascending=[True, False]).copy()
-    if "日期" in display_df.columns:
-        display_df["日期"] = display_df["日期"].dt.strftime("%Y-%m-%d")
-    for col in ["签到率", "消课率", "退课率", "容量利用率"]:
-        if col in display_df.columns:
-            display_df[col] = display_df[col].apply(lambda x: f"{x:.1%}")
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    if dimension in ("场馆", "助教"):
+        from analytics import compute_anomaly_by_dimension
+        dim_df = compute_anomaly_by_dimension(df, dimension)
+        if dim_df.empty:
+            st.info("当前维度下无异常汇总数据")
+            return
+        for col in ["平均签到率", "平均退课率", "平均容量利用率"]:
+            if col in dim_df.columns:
+                dim_df[col] = dim_df[col].apply(lambda x: f"{x:.1%}")
+        st.dataframe(dim_df, use_container_width=True, hide_index=True)
+    else:
+        display_cols = ["日期", "课程名称", "场馆", "助教", "报名人数", "签到率", "消课率", "退课率", "容量利用率", "异常标签文本", "严重程度"]
+        existing_cols = [c for c in display_cols if c in anomaly_df.columns]
+        display_df = anomaly_df[existing_cols].sort_values(["严重程度", "日期"], ascending=[True, False]).copy()
+        if "日期" in display_df.columns:
+            display_df["日期"] = display_df["日期"].dt.strftime("%Y-%m-%d")
+        for col in ["签到率", "消课率", "退课率", "容量利用率"]:
+            if col in display_df.columns:
+                display_df[col] = display_df[col].apply(lambda x: f"{x:.1%}")
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 
-def render_single_course_review(df, course_name):
-    review = compute_single_course_review(df, course_name)
+def render_dimension_review(df, name, dimension="课程名称"):
+    if dimension == "课程名称":
+        review = compute_single_course_review(df, name)
+    elif dimension == "场馆":
+        review = compute_single_venue_review(df, name)
+    elif dimension == "助教":
+        review = compute_single_ta_review(df, name)
+    else:
+        review = compute_single_course_review(df, name)
     if review is None:
-        st.warning(f"未找到课程「{course_name}」的数据")
+        st.warning(f"未找到「{name}」的数据")
         return
-    st.markdown(f"### 📋 {course_name} 复盘报告")
+    dim_label = review.get("维度类型", "课程")
+    st.markdown(f"### 📋 {name} 复盘报告")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("总课时数", review["总课时数"])
     col2.metric("异常课时数", review["异常课时数"])
@@ -168,16 +191,29 @@ def render_single_course_review(df, course_name):
 
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("#### 关联场馆")
-        for v in review["关联场馆"]:
-            st.markdown(f"- {v}")
-        st.caption(f"场馆整体异常率：{review['场馆异常率']:.1%}（整体 {review['整体异常率']:.1%}）")
-
+        if dim_label == "课程":
+            st.markdown("#### 关联场馆")
+            for v in review.get("关联场馆", []):
+                st.markdown(f"- {v}")
+            st.caption(f"场馆整体异常率：{review.get('场馆异常率', 0):.1%}（整体 {review.get('整体异常率', 0):.1%}）")
+        else:
+            st.markdown("#### 关联课程")
+            for c in review.get("关联课程", []):
+                st.markdown(f"- {c}")
     with col2:
-        st.markdown("#### 关联助教")
-        for t in review["关联助教"]:
-            st.markdown(f"- {t}")
-        st.caption(f"助教整体异常率：{review['助教异常率']:.1%}（整体 {review['整体异常率']:.1%}）")
+        if dim_label == "课程":
+            st.markdown("#### 关联助教")
+            for t in review.get("关联助教", []):
+                st.markdown(f"- {t}")
+            st.caption(f"助教整体异常率：{review.get('助教异常率', 0):.1%}（整体 {review.get('整体异常率', 0):.1%}）")
+        elif dim_label == "场馆":
+            st.markdown("#### 关联助教")
+            for t in review.get("关联助教", []):
+                st.markdown(f"- {t}")
+        else:
+            st.markdown("#### 关联场馆")
+            for v in review.get("关联场馆", []):
+                st.markdown(f"- {v}")
 
     st.divider()
     st.markdown("#### 结论")
@@ -193,9 +229,9 @@ def render_single_course_review(df, course_name):
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
-    st.markdown("#### 课程逐课时明细")
+    st.markdown("#### 逐课时明细")
     detail_df = course_detail.copy()
-    display_cols = ["日期", "场馆", "助教", "报名人数", "签到率", "消课率", "退课率", "容量利用率", "异常标签文本", "严重程度"]
+    display_cols = ["日期", "课程名称", "场馆", "助教", "报名人数", "签到率", "消课率", "退课率", "容量利用率", "异常标签文本", "严重程度"]
     existing_cols = [c for c in display_cols if c in detail_df.columns]
     display_df = detail_df[existing_cols].copy()
     if "日期" in display_df.columns:
@@ -220,7 +256,7 @@ def render_anomaly_suggestions(suggestions):
 
 def render_anomaly_filters(df):
     if df.empty:
-        return df
+        return df, df
     col1, col2 = st.columns(2)
     col3, col4 = st.columns(2)
 
@@ -251,13 +287,13 @@ def render_anomaly_filters(df):
         selected_assistants = st.multiselect("助教", options=assistants, default=[], key="anomaly_ta")
 
     severity_filter = st.multiselect(
-        "严重程度",
+        "严重程度（仅筛选下方明细与复盘）",
         options=["严重", "警告", "提示"],
         default=[],
         key="anomaly_severity",
     )
 
-    filtered = filter_data(
+    base_filtered = filter_data(
         df,
         courses=selected_courses if selected_courses else None,
         date_range=date_range if date_range else None,
@@ -265,6 +301,8 @@ def render_anomaly_filters(df):
         assistants=selected_assistants if selected_assistants else None,
     )
     if severity_filter:
-        filtered = compute_anomaly_tags(filtered)
-        filtered = filtered[filtered["严重程度"].isin(severity_filter)]
-    return filtered
+        tagged = compute_anomaly_tags(base_filtered)
+        detail_filtered = tagged[tagged["严重程度"].isin(severity_filter)]
+    else:
+        detail_filtered = base_filtered
+    return base_filtered, detail_filtered

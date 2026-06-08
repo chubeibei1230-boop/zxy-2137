@@ -6,6 +6,7 @@ DEFAULT_THRESHOLDS = {
     "high_drop_rate": 0.15,
     "over_capacity_ratio": 1.20,
     "high_ta_load": 6,
+    "low_completion_rate": 0.40,
 }
 
 
@@ -80,6 +81,17 @@ def render_threshold_controls():
                 key="slider_ta_load",
             )
             set_threshold("high_ta_load", high_ta_load)
+
+            low_completion = st.slider(
+                "低消课率阈值",
+                min_value=0.0,
+                max_value=1.0,
+                value=thresholds.get("low_completion_rate", 0.40),
+                step=0.05,
+                format="%.0f%%",
+                key="slider_low_completion",
+            )
+            set_threshold("low_completion_rate", low_completion)
 
         if st.button("重置为默认值"):
             st.session_state.thresholds = dict(DEFAULT_THRESHOLDS)
