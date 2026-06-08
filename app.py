@@ -12,6 +12,7 @@ from charts import (
 )
 from components import render_overview_cards, render_risk_table, render_suggestions, render_filters, render_upload_section
 from report import render_export_section
+from anomaly_review import render_anomaly_review_page
 
 st.set_page_config(
     page_title="运动课程数据分析",
@@ -28,6 +29,8 @@ st.title("🏃 运动课程数据分析平台")
 render_role_selector()
 st.sidebar.divider()
 
+page = st.sidebar.radio("功能模块", ["数据总览", "课程异常复盘"], key="page_nav")
+
 raw_df = get_data()
 
 if has_permission("upload"):
@@ -38,58 +41,62 @@ if raw_df.empty:
     st.warning("暂无课程数据。请通过侧栏上传 CSV 文件，或确保 data/courses.csv 存在。")
     st.stop()
 
-filtered_df = render_filters(raw_df)
+if page == "课程异常复盘":
+    render_threshold_controls()
+    render_anomaly_review_page(raw_df)
+else:
+    filtered_df = render_filters(raw_df)
 
-render_threshold_controls()
+    render_threshold_controls()
 
-risk_df = identify_risks(filtered_df)
-overview = compute_overview(filtered_df)
-suggestions = generate_suggestions(filtered_df)
+    risk_df = identify_risks(filtered_df)
+    overview = compute_overview(filtered_df)
+    suggestions = generate_suggestions(filtered_df)
 
-render_overview_cards(overview)
+    render_overview_cards(overview)
 
-st.divider()
-
-tab1, tab2, tab3, tab4 = st.tabs(["风险分析", "趋势图表", "助教负载", "场馆热力图"])
-
-with tab1:
-    st.subheader("风险课程列表")
-    render_risk_table(risk_df)
     st.divider()
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        fig_risk = render_risk_distribution(risk_df)
-        st.plotly_chart(fig_risk, use_container_width=True)
-    with col2:
-        st.subheader("分析建议")
-        render_suggestions(suggestions)
 
-with tab2:
-    trend_df = compute_trends(filtered_df, freq="W")
-    col1, col2 = st.columns(2)
-    with col1:
-        fig_trend = render_trend_chart(trend_df)
-        st.plotly_chart(fig_trend, use_container_width=True)
-    with col2:
-        fig_enroll = render_enrollment_chart(trend_df)
-        st.plotly_chart(fig_enroll, use_container_width=True)
+    tab1, tab2, tab3, tab4 = st.tabs(["风险分析", "趋势图表", "助教负载", "场馆热力图"])
 
-with tab3:
-    ta_df = compute_ta_load(filtered_df)
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        fig_ta = render_ta_load_chart(ta_df)
-        st.plotly_chart(fig_ta, use_container_width=True)
-    with col2:
-        st.subheader("助教负载明细")
-        if not ta_df.empty:
-            st.dataframe(ta_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("暂无数据")
+    with tab1:
+        st.subheader("风险课程列表")
+        render_risk_table(risk_df)
+        st.divider()
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            fig_risk = render_risk_distribution(risk_df)
+            st.plotly_chart(fig_risk, use_container_width=True)
+        with col2:
+            st.subheader("分析建议")
+            render_suggestions(suggestions)
 
-with tab4:
-    fig_heatmap = render_venue_heatmap(filtered_df)
-    st.plotly_chart(fig_heatmap, use_container_width=True)
+    with tab2:
+        trend_df = compute_trends(filtered_df, freq="W")
+        col1, col2 = st.columns(2)
+        with col1:
+            fig_trend = render_trend_chart(trend_df)
+            st.plotly_chart(fig_trend, use_container_width=True)
+        with col2:
+            fig_enroll = render_enrollment_chart(trend_df)
+            st.plotly_chart(fig_enroll, use_container_width=True)
 
-st.divider()
-render_export_section(filtered_df, risk_df, overview, suggestions)
+    with tab3:
+        ta_df = compute_ta_load(filtered_df)
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            fig_ta = render_ta_load_chart(ta_df)
+            st.plotly_chart(fig_ta, use_container_width=True)
+        with col2:
+            st.subheader("助教负载明细")
+            if not ta_df.empty:
+                st.dataframe(ta_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("暂无数据")
+
+    with tab4:
+        fig_heatmap = render_venue_heatmap(filtered_df)
+        st.plotly_chart(fig_heatmap, use_container_width=True)
+
+    st.divider()
+    render_export_section(filtered_df, risk_df, overview, suggestions)

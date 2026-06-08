@@ -164,3 +164,139 @@ def render_venue_heatmap(df):
         height=max(300, len(pivot.index) * 40 + 100),
     )
     return fig
+
+
+def render_anomaly_category_chart(anomaly_overview):
+    tag_dist = anomaly_overview.get("异常标签分布", {})
+    if not tag_dist:
+        return go.Figure()
+    labels = list(tag_dist.keys())
+    values = list(tag_dist.values())
+    colors = {"低签到率": "#dc2626", "高退课率": "#f59e0b", "人数超限": "#8b5cf6", "低消课率": "#2563eb", "助教负载异常": "#16a34a"}
+    marker_colors = [colors.get(l, "#6b7280") for l in labels]
+    fig = go.Figure(data=[go.Bar(
+        x=labels,
+        y=values,
+        marker_color=marker_colors,
+        text=values,
+        textposition="outside",
+    )])
+    fig.update_layout(
+        template=CHART_TEMPLATE,
+        title="异常原因归类",
+        xaxis_title="异常类型",
+        yaxis_title="涉及课时数",
+        height=380,
+    )
+    return fig
+
+
+def render_anomaly_trend_chart(trend_df):
+    if trend_df.empty:
+        return go.Figure()
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=trend_df["周期"],
+        y=trend_df["课程数"],
+        name="总课程数",
+        marker_color="#93c5fd",
+    ))
+    fig.add_trace(go.Bar(
+        x=trend_df["周期"],
+        y=trend_df["异常课程数"],
+        name="异常课程数",
+        marker_color="#fca5a5",
+    ))
+    fig.add_trace(go.Scatter(
+        x=trend_df["周期"],
+        y=trend_df["异常率"],
+        mode="lines+markers",
+        name="异常率(%)",
+        yaxis="y2",
+        line=dict(color="#dc2626", width=2),
+    ))
+    fig.update_layout(
+        template=CHART_TEMPLATE,
+        title="异常趋势变化",
+        xaxis_title="周期",
+        yaxis_title="课程数",
+        yaxis2=dict(title="异常率(%)", overlaying="y", side="right"),
+        barmode="overlay",
+        hovermode="x unified",
+        height=380,
+    )
+    return fig
+
+
+def render_anomaly_dimension_chart(dim_df, dimension="课程名称"):
+    if dim_df.empty:
+        return go.Figure()
+    colors_map = {"课程名称": "#2563eb", "场馆": "#16a34a", "助教": "#f59e0b"}
+    fig = go.Figure(data=[go.Bar(
+        x=dim_df[dimension],
+        y=dim_df["异常次数"],
+        marker_color=colors_map.get(dimension, "#2563eb"),
+        text=dim_df["异常次数"],
+        textposition="outside",
+    )])
+    fig.update_layout(
+        template=CHART_TEMPLATE,
+        title=f"按{dimension}异常分布",
+        xaxis_title=dimension,
+        yaxis_title="异常次数",
+        height=380,
+    )
+    return fig
+
+
+def render_single_course_trend_chart(course_df):
+    if course_df.empty:
+        return go.Figure()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=course_df["日期"],
+        y=(course_df["签到率"] * 100).round(1),
+        mode="lines+markers",
+        name="签到率(%)",
+        line=dict(color="#2563eb", width=2),
+    ))
+    fig.add_trace(go.Scatter(
+        x=course_df["日期"],
+        y=(course_df["退课率"] * 100).round(1),
+        mode="lines+markers",
+        name="退课率(%)",
+        line=dict(color="#dc2626", width=2),
+    ))
+    fig.add_trace(go.Scatter(
+        x=course_df["日期"],
+        y=(course_df["消课率"] * 100).round(1),
+        mode="lines+markers",
+        name="消课率(%)",
+        line=dict(color="#16a34a", width=2),
+    ))
+    fig.add_trace(go.Scatter(
+        x=course_df["日期"],
+        y=(course_df["容量利用率"] * 100).round(1),
+        mode="lines+markers",
+        name="容量利用率(%)",
+        line=dict(color="#8b5cf6", width=2, dash="dot"),
+    ))
+    anomaly_df = course_df[course_df["是否异常"]]
+    if not anomaly_df.empty:
+        fig.add_trace(go.Scatter(
+            x=anomaly_df["日期"],
+            y=[100] * len(anomaly_df),
+            mode="markers",
+            name="异常课时",
+            marker=dict(color="#dc2626", size=10, symbol="x", line=dict(width=2)),
+            showlegend=True,
+        ))
+    fig.update_layout(
+        template=CHART_TEMPLATE,
+        title="课程指标变化趋势",
+        xaxis_title="日期",
+        yaxis_title="百分比(%)",
+        hovermode="x unified",
+        height=400,
+    )
+    return fig
