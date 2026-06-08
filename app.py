@@ -92,4 +92,4 @@ with tab4:
     st.plotly_chart(fig_heatmap, use_container_width=True)
 
 st.divider()
-render_export_section(filtered_df, overview, suggestions)
+render_export_section(filtered_df, risk_df, overview, suggestions)

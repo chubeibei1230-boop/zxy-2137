@@ -1,9 +1,7 @@
-import os
 import io
 from datetime import datetime
 import pandas as pd
 import streamlit as st
-from data_manager import REPORTS_DIR, get_data
 from analytics import identify_risks, compute_overview, compute_ta_load, generate_suggestions
 from thresholds import get_thresholds
 
@@ -79,17 +77,12 @@ def export_report(df, overview, suggestions):
     buf = io.BytesIO()
     buf.write(report_text.encode("utf-8-sig"))
     buf.seek(0)
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"report_{timestamp}.txt"
-    filepath = os.path.join(REPORTS_DIR, filename)
-    with open(filepath, "w", encoding="utf-8-sig") as f:
-        f.write(report_text)
-
     return buf, filename
 
 
-def render_export_section(df, overview, suggestions):
+def render_export_section(filtered_df, risk_df, overview, suggestions):
     from auth import has_permission
     if not has_permission("export"):
         return
@@ -98,7 +91,7 @@ def render_export_section(df, overview, suggestions):
     col1, col2 = st.columns(2)
 
     with col1:
-        csv_buf = export_csv(df)
+        csv_buf = export_csv(filtered_df)
         if csv_buf is not None:
             st.download_button(
                 label="导出筛选数据 (CSV)",
@@ -110,7 +103,7 @@ def render_export_section(df, overview, suggestions):
             st.caption("无数据可导出")
 
     with col2:
-        report_buf, report_name = export_report(df, overview, suggestions)
+        report_buf, report_name = export_report(risk_df, overview, suggestions)
         st.download_button(
             label="导出分析报告 (TXT)",
             data=report_buf,

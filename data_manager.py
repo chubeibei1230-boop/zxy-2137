@@ -22,6 +22,15 @@ def _validate_columns(df):
     return True
 
 
+def _normalize_df(df):
+    df = df.copy()
+    df["日期"] = pd.to_datetime(df["日期"], errors="coerce")
+    for col in ["报名人数", "签到人数", "消课人数", "退课人数", "课程容量"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+    return df
+
+
 def load_data(filepath=None):
     if filepath is None:
         filepath = DEFAULT_CSV
@@ -29,12 +38,7 @@ def load_data(filepath=None):
         return pd.DataFrame(columns=REQUIRED_COLUMNS)
     df = pd.read_csv(filepath, encoding="utf-8-sig")
     _validate_columns(df)
-    df["日期"] = pd.to_datetime(df["日期"], errors="coerce")
-    df["报名人数"] = pd.to_numeric(df["报名人数"], errors="coerce").fillna(0).astype(int)
-    df["签到人数"] = pd.to_numeric(df["签到人数"], errors="coerce").fillna(0).astype(int)
-    df["消课人数"] = pd.to_numeric(df["消课人数"], errors="coerce").fillna(0).astype(int)
-    df["退课人数"] = pd.to_numeric(df["退课人数"], errors="coerce").fillna(0).astype(int)
-    df["课程容量"] = pd.to_numeric(df["课程容量"], errors="coerce").fillna(0).astype(int)
+    df = _normalize_df(df)
     return df
 
 
@@ -45,6 +49,7 @@ def save_data(df, filepath=None):
 
 
 def append_data(new_df, filepath=None):
+    new_df = _normalize_df(new_df)
     existing = load_data(filepath)
     combined = pd.concat([existing, new_df], ignore_index=True)
     combined.drop_duplicates(inplace=True)

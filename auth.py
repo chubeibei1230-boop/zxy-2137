@@ -9,7 +9,7 @@ ROLES = {
 ROLE_PERMISSIONS = {
     "admin": {"upload": True, "adjust_threshold": True, "view_report": True, "export": True},
     "user": {"upload": False, "adjust_threshold": True, "view_report": True, "export": True},
-    "auditor": {"upload": False, "adjust_threshold": False, "view_report": True, "export": True},
+    "auditor": {"upload": False, "adjust_threshold": False, "view_report": True, "export": False},
 }
 
 
